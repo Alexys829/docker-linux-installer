@@ -21,6 +21,16 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+check_connectivity() {
+    log_info "Verifica connettività a download.docker.com..."
+    if curl -sf --max-time 10 "https://download.docker.com" > /dev/null; then
+        return 0
+    else
+        log_error "Impossibile raggiungere download.docker.com. Verifica la connessione internet."
+        return 1
+    fi
+}
+
 # ── Check iniziale: Docker già installato? ─────────────────
 if command -v docker &>/dev/null; then
     log_warning "Docker è già installato: $(docker --version)"
@@ -31,28 +41,13 @@ fi
 log_info "Inizio installazione Docker e Docker Compose"
 echo "================================================"
 
-# ── Step 1: Aggiornamento sistema ─────────────────────────
-log_info "Step 1: Aggiornamento pacchetti di sistema..."
-if sudo apt update && sudo apt upgrade -y; then
-    log_info "Aggiornamento sistema completato con successo"
-else
-    log_error "Impossibile aggiornare il sistema. Verifica connessione internet e permessi sudo."
-    exit 1
-fi
+check_connectivity || exit 1
 
-# ── Step 2: Dipendenze ─────────────────────────────────────
-log_info "Step 2: Installazione dipendenze..."
-if sudo apt install -y ca-certificates curl gnupg lsb-release; then
-    log_info "Installazione dipendenze completata con successo"
-else
-    log_error "Impossibile installare le dipendenze necessarie"
-    exit 1
-fi
-
-# ── Step 3: Rilevamento distro base ───────────────────────
-log_info "Step 3: Rilevamento distribuzione Linux..."
-DISTRO_ID=$(. /etc/os-release && echo "$ID")
-DISTRO_CODENAME=$(lsb_release -cs)
+# ── Step 1: Rilevamento distro ───────────────────────────
+log_info "Step 1: Rilevamento distribuzione Linux..."
+. /etc/os-release
+DISTRO_ID="$ID"
+DISTRO_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo 'jammy')}"
 
 case "$DISTRO_ID" in
     linuxmint|kubuntu|ubuntu|pop)
@@ -68,8 +63,26 @@ case "$DISTRO_ID" in
 esac
 log_info "Distribuzione rilevata: $DISTRO_ID → repo Docker: $DOCKER_REPO_DISTRO"
 
-# ── Step 4: Chiave GPG Docker ─────────────────────────────
-log_info "Step 4: Download e installazione chiave GPG Docker..."
+# ── Step 2: Aggiornamento sistema ─────────────────────────
+log_info "Step 2: Aggiornamento pacchetti di sistema..."
+if sudo apt update && sudo apt upgrade -y; then
+    log_info "Aggiornamento sistema completato con successo"
+else
+    log_error "Impossibile aggiornare il sistema. Verifica connessione internet e permessi sudo."
+    exit 1
+fi
+
+# ── Step 3: Dipendenze ─────────────────────────────────────
+log_info "Step 3: Installazione dipendenze..."
+if sudo apt install -y ca-certificates curl gnupg lsb-release; then
+    log_info "Installazione dipendenze completata con successo"
+else
+    log_error "Impossibile installare le dipendenze necessarie"
+    exit 1
+fi
+
+# ── Step 3: Chiave GPG Docker ─────────────────────────────
+log_info "Step 3: Download e installazione chiave GPG Docker..."
 sudo install -m 0755 -d /etc/apt/keyrings
 if curl -fsSL "https://download.docker.com/linux/${DOCKER_REPO_DISTRO}/gpg" \
     | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
@@ -80,8 +93,8 @@ else
     exit 1
 fi
 
-# ── Step 5: Aggiunta repository Docker ──────────────────────
-log_info "Step 5: Aggiunta repository Docker..."
+# ── Step 4: Aggiunta repository Docker ──────────────────────
+log_info "Step 4: Aggiunta repository Docker..."
 if echo \
     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DOCKER_REPO_DISTRO} \
@@ -93,8 +106,8 @@ else
     exit 1
 fi
 
-# ── Step 6: Aggiornamento indice pacchetti ───────────────────
-log_info "Step 6: Aggiornamento indice pacchetti..."
+# ── Step 5: Aggiornamento indice pacchetti ───────────────────
+log_info "Step 5: Aggiornamento indice pacchetti..."
 if sudo apt update; then
     log_info "Aggiornamento repository completato con successo"
 else
@@ -102,8 +115,8 @@ else
     exit 1
 fi
 
-# ── Step 7: Installazione Docker Engine ─────────────────────
-log_info "Step 7: Installazione Docker Engine..."
+# ── Step 6: Installazione Docker Engine ─────────────────────
+log_info "Step 6: Installazione Docker Engine..."
 if sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
     log_info "Installazione Docker completata con successo"
 else
@@ -111,8 +124,8 @@ else
     exit 1
 fi
 
-# ── Step 8: Aggiunta utente al gruppo docker ────────────────
-log_info "Step 8: Aggiunta utente corrente al gruppo docker..."
+# ── Step 7: Aggiunta utente al gruppo docker ────────────────
+log_info "Step 7: Aggiunta utente corrente al gruppo docker..."
 if sudo usermod -aG docker "$USER"; then
     log_info "Aggiunta utente al gruppo docker completata con successo"
     log_warning "Dovrai effettuare logout e login per usare Docker senza sudo"
@@ -121,8 +134,8 @@ else
     exit 1
 fi
 
-# ── Step 9: Abilitazione e avvio servizio Docker ─────────────
-log_info "Step 9: Abilitazione servizio Docker all'avvio..."
+# ── Step 8: Abilitazione e avvio servizio Docker ─────────────
+log_info "Step 8: Abilitazione servizio Docker all'avvio..."
 if sudo systemctl enable docker && sudo systemctl start docker; then
     log_info "Servizio Docker avviato con successo"
 else
@@ -136,22 +149,30 @@ echo "================================================"
 log_info "Verifica installazione:"
 echo ""
 
-if docker --version; then
+if docker info &>/dev/null; then
     log_info "Docker Engine: OK ✅"
 else
     log_error "Docker non è stato installato correttamente"
     exit 1
 fi
 
-if docker compose version; then
+if docker compose version &>/dev/null; then
     log_info "Docker Compose (plugin V2): OK ✅"
 else
     log_error "Docker Compose non è stato installato correttamente"
     exit 1
 fi
 
+if sudo systemctl is-active --quiet docker; then
+    log_info "Servizio Docker: OK ✅"
+else
+    log_error "Il servizio Docker non è in esecuzione"
+    exit 1
+fi
+
 echo ""
 echo "================================================"
-log_info "Installazione completata con successo! 🎉"
+log_info "Installazione completata con successo!"
 log_warning "IMPORTANTE: Effettua logout e login per usare Docker senza sudo"
+sudo systemctl status docker --no-pager
 echo "================================================"
